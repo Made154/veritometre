@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=800, height=480, user-scalable=no">
+  <title>Le Véritomètre™</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div id="app">
+
+    <section id="ecran-attente" class="ecran actif">
+      <h1 class="titre-neon">POSEZ VOTRE MAIN<br>SUR LES CAPTEURS</h1>
+      <div class="pulse-anneau"></div>
+    </section>
+
+    <section id="ecran-calibration" class="ecran">
+      <h1 class="titre-neon">ÉTALONNAGE BIOMÉTRIQUE</h1>
+      <div class="barre-fond">
+        <div class="barre-remplissage"></div>
+      </div>
+    </section>
+
+    <section id="ecran-session" class="ecran">
+      <p id="texte-question" class="question">En attente d'une question…</p>
+      <canvas id="canvas-courbe" width="640" height="180"></canvas>
+      <div class="ligne-mesures">
+        <div class="bloc-jauge">
+          <span class="etiquette">ÉCART</span>
+          <div class="jauge-fond">
+            <div id="jauge-ecart" class="jauge-remplissage"></div>
+          </div>
+          <span id="valeur-ecart" class="valeur">0.0%</span>
+        </div>
+        <div class="bloc-bpm">
+          <span class="etiquette">BPM</span>
+          <span id="valeur-bpm" class="valeur valeur-bpm">--</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="ecran-verdict" class="ecran">
+      <p id="texte-verdict" class="verdict">—</p>
+      <p class="score-etiquette">SCORE DE FIABILITÉ</p>
+      <p id="score-verdict" class="score">0%</p>
+    </section>
+
+    <section id="ecran-perdu" class="ecran">
+      <h1 class="titre-alerte">CONTACT PERDU</h1>
+      <p class="sous-titre-alerte">TENTATIVE DE FUITE DÉTECTÉE</p>
+    </section>
+
+    <div id="scanlines" aria-hidden="true"></div>
+
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.3/dist/mqtt.min.js"></script>
+
+  <script src="js/courbe.js"></script>
+  <script src="js/mqtt-client.js"></script>
+  <script src="js/simulateur.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
