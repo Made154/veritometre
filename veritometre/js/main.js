@@ -1,4 +1,7 @@
-const MODE_SIMU = true;
+// 'polling' = interroge Flask (/get-question) en boucle — solution actuelle avec n8n
+// 'simu'    = données factices pour tester l'écran sans backend
+// 'mqtt'    = broker MQTT (nécessite Mosquitto + un publisher côté Pi)
+const MODE = 'polling';
 
 const ETATS = ['attente', 'calibration', 'session', 'verdict', 'perdu'];
 let etatActuel = null;
@@ -48,6 +51,7 @@ function gererMessage(topic, payload) {
       break;
     case 'veritometre/question':
       document.getElementById('texte-question').textContent = payload.texte;
+      if (etatActuel !== 'session') afficherEtat('session');
       break;
     case 'veritometre/verdict':
       afficherVerdict(payload.resultat, payload.score);
@@ -80,9 +84,11 @@ window.addEventListener('DOMContentLoaded', () => {
   initCourbe('canvas-courbe');
   afficherEtat('attente');
 
-  if (MODE_SIMU) {
+  if (MODE === 'simu') {
     controleurSimulateur = demarrerSimulateur(gererMessage);
-  } else {
+  } else if (MODE === 'mqtt') {
     demarrerMQTT(gererMessage);
+  } else if (MODE === 'polling') {
+    demarrerPolling(gererMessage);
   }
 });
