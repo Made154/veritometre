@@ -1,8 +1,12 @@
-const HISTORIQUE_MAX = 100;
+// Nombre de points affichés. À 125 Hz (cadence de l'Arduino ECG), 250 points
+// = ~2 s de tracé visible qui défilent, façon moniteur cardiaque.
+// Le simulateur (qui envoie des BPM lents) fonctionne tout aussi bien.
+const HISTORIQUE_MAX = 250;
 
 let ctxCourbe = null;
 let canvasCourbe = null;
 let historiqueBpm = [];
+let redessinDemande = false;
 
 function initCourbe(idCanvas) {
   canvasCourbe = document.getElementById(idCanvas);
@@ -11,15 +15,26 @@ function initCourbe(idCanvas) {
 
 function reinitialiserCourbe() {
   historiqueBpm = [];
-  dessinerCourbe();
+  planifierRedessin();
 }
 
-function ajouterPointCourbe(bpm) {
-  historiqueBpm.push(bpm);
+function ajouterPointCourbe(valeur) {
+  historiqueBpm.push(valeur);
   if (historiqueBpm.length > HISTORIQUE_MAX) {
     historiqueBpm.shift();
   }
-  dessinerCourbe();
+  planifierRedessin();
+}
+
+// Les échantillons ECG arrivent vite (~125/s) ; on ne redessine qu'une fois par
+// frame d'affichage (~60/s) pour rester fluide sans saturer le CPU du Pi.
+function planifierRedessin() {
+  if (redessinDemande) return;
+  redessinDemande = true;
+  requestAnimationFrame(() => {
+    redessinDemande = false;
+    dessinerCourbe();
+  });
 }
 
 function dessinerCourbe() {
@@ -41,9 +56,9 @@ function dessinerCourbe() {
   ctxCourbe.strokeStyle = '#39FF14';
   ctxCourbe.lineWidth = 2;
   ctxCourbe.beginPath();
-  historiqueBpm.forEach((bpm, i) => {
+  historiqueBpm.forEach((valeur, i) => {
     const x = (decalage + i) * echelleX;
-    const y = projeterY(bpm);
+    const y = projeterY(valeur);
     if (i === 0) ctxCourbe.moveTo(x, y);
     else ctxCourbe.lineTo(x, y);
   });

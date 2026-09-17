@@ -1,10 +1,13 @@
 import os
 import json
+import time
+import math
 import queue
 import threading
+from collections import deque
 
 import requests
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, "veritometre")  # contient index.html, css/, js/
@@ -201,6 +204,222 @@ def demarrer_ecoute_micro():
     threading.Thread(target=boucle, daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# Capteur ECG (Arduino + module AD8232) : on lit le port série, on trace la
+# courbe, on estime le BPM et un "écart" (accélération du cœur vs. baseline),
+# puis on pousse tout ça au navigateur via SSE (Server-Sent Events).
+#
+# Le format série attendu (voir arduino/veritometre_ecg/veritometre_ecg.ino) :
+#   "512\n" -> échantillon ECG brut 0..1023
+#   "!\n"   -> électrode décrochée (leads-off)
+#
+# Réglages via variables d'environnement :
+#   VERITO_SERIAL_PORT  ex: /dev/cu.usbmodem14101  (auto-détection si absent)
+#   VERITO_SERIAL_BAUD  défaut 115200
+#   VERITO_ECG_SIMULATE 1 pour forcer un ECG synthétique (test sans matériel)
+#                       0 pour l'interdire. Absent = auto (simule si pas de port).
+# ---------------------------------------------------------------------------
+SERIAL_BAUD = int(os.environ.get("VERITO_SERIAL_BAUD", "115200"))
+FREQ_ECG = 125  # Hz — doit correspondre à la cadence du sketch Arduino
+
+_abonnes_ecg = []                 # liste de queue.Queue, un par onglet connecté
+_abonnes_lock = threading.Lock()
+
+
+def _diffuser_ecg(payload):
+    """Envoie un point de mesure à tous les navigateurs connectés en SSE."""
+    with _abonnes_lock:
+        for q in list(_abonnes_ecg):
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                pass  # navigateur trop lent : on saute ce point plutôt que bloquer
+
+
+class AnalyseurECG:
+    """Détecte les pics R du signal ECG pour en déduire le BPM, et compare le
+    BPM courant à une baseline lente pour produire un 'écart' (%) — c'est lui
+    qui alimente la jauge facon détecteur de mensonge."""
+
+    def __init__(self):
+        self.fenetre = deque(maxlen=2 * FREQ_ECG)  # ~2 s pour le seuil dynamique
+        self.dernier_pic = None                    # instant (monotonic) du dernier R
+        self.au_dessus = False                     # hystérésis anti-rebond
+        self.intervalles = deque(maxlen=6)         # derniers intervalles RR (s)
+        self.bpm_courant = None
+        self.bpm_base = None                       # baseline (EMA lente)
+
+    def ajouter(self, valeur, t):
+        self.fenetre.append(valeur)
+        if len(self.fenetre) < 20:
+            return  # pas assez de recul pour un seuil fiable
+
+        vmin, vmax = min(self.fenetre), max(self.fenetre)
+        amplitude = vmax - vmin
+        seuil = vmax + 1 if amplitude < 40 else vmin + 0.62 * amplitude
+
+        if not self.au_dessus and valeur > seuil:
+            self.au_dessus = True
+            if self.dernier_pic is None or (t - self.dernier_pic) > 0.3:  # réfractaire 0,3 s
+                if self.dernier_pic is not None:
+                    rr = t - self.dernier_pic
+                    if 0.3 <= rr <= 2.0:  # 30..200 BPM : plausible
+                        self.intervalles.append(rr)
+                        moyenne_rr = sum(self.intervalles) / len(self.intervalles)
+                        self.bpm_courant = 60.0 / moyenne_rr
+                        if self.bpm_base is None:
+                            self.bpm_base = self.bpm_courant
+                        else:
+                            self.bpm_base += 0.05 * (self.bpm_courant - self.bpm_base)
+                self.dernier_pic = t
+        elif self.au_dessus and valeur < seuil - 0.1 * amplitude:
+            self.au_dessus = False
+
+    def etat(self, valeur, leads_off=False):
+        ecart = 0.0
+        if self.bpm_courant and self.bpm_base:
+            ecart = (self.bpm_courant - self.bpm_base) / self.bpm_base * 100
+        return {
+            "signal": valeur,                                       # tracé brut de la courbe
+            "bpm": round(self.bpm_courant) if self.bpm_courant else "--",
+            "ecart": round(ecart, 1),
+            "leadsOff": leads_off,
+        }
+
+
+def _detecter_port_serie():
+    """Cherche un port qui ressemble à un Arduino (macOS / Linux / Windows)."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return None
+    indices = ("usbmodem", "usbserial", "wchusbserial", "ttyusb", "ttyacm",
+               "arduino", "ch340", "ch910", "cp210", "wch")
+    for port in list_ports.comports():
+        texte = f"{port.device} {port.description} {port.manufacturer}".lower()
+        if any(ind in texte for ind in indices):
+            return port.device
+    return None
+
+
+def _boucle_serie(port):
+    import serial  # pyserial
+    analyseur = AnalyseurECG()
+    print(f"❤️  ECG : ouverture du port série {port} @ {SERIAL_BAUD} bauds")
+    with serial.Serial(port, SERIAL_BAUD, timeout=1) as ser:
+        ser.reset_input_buffer()
+        while True:
+            ligne = ser.readline().decode("ascii", "ignore").strip()
+            if not ligne:
+                continue
+            if ligne == "!":
+                _diffuser_ecg({"signal": None, "bpm": "--", "ecart": 0.0, "leadsOff": True})
+                continue
+            try:
+                valeur = int(ligne)
+            except ValueError:
+                continue  # ligne parasite (bruit au démarrage, etc.)
+            t = time.monotonic()
+            analyseur.ajouter(valeur, t)
+            _diffuser_ecg(analyseur.etat(valeur))
+
+
+def _echantillon_ecg(phase):
+    """Un battement ECG synthétique (P-QRS-T) pour la phase [0,1). ~[-0.3, 1.0]."""
+    def g(centre, largeur, amplitude):
+        return amplitude * math.exp(-((phase - centre) ** 2) / (2 * largeur * largeur))
+    return (g(0.15, 0.020, 0.10)    # onde P
+            - g(0.38, 0.008, 0.12)  # Q
+            + g(0.40, 0.010, 1.00)  # R
+            - g(0.42, 0.010, 0.25)  # S
+            + g(0.60, 0.040, 0.25)) # onde T
+
+
+def _boucle_synthetique():
+    """Génère un ECG crédible sans matériel : pratique pour tester l'écran."""
+    print("❤️  ECG : aucun Arduino détecté — génération d'un ECG synthétique.")
+    analyseur = AnalyseurECG()
+    dt = 1.0 / FREQ_ECG
+    phase = 0.0
+    tk = 0.0
+    prochain = time.monotonic()
+    while True:
+        # Rythme cardiaque qui respire un peu autour de 72 BPM + bruit léger.
+        bpm_cible = 72 + 6 * math.sin(tk * 0.20) + (os.urandom(1)[0] - 128) / 128 * 1.5
+        rr = 60.0 / bpm_cible
+        phase += dt / rr
+        if phase >= 1.0:
+            phase -= 1.0
+        bruit = (os.urandom(1)[0] - 128) / 128 * 0.02
+        valeur = int(max(0, min(1023, 512 + (_echantillon_ecg(phase) + bruit) * 350)))
+
+        t = time.monotonic()
+        analyseur.ajouter(valeur, t)
+        _diffuser_ecg(analyseur.etat(valeur))
+
+        tk += dt
+        prochain += dt
+        retard = prochain - time.monotonic()
+        if retard > 0:
+            time.sleep(retard)
+        else:
+            prochain = time.monotonic()  # on a pris du retard : on se recale
+
+
+def demarrer_lecture_ecg():
+    """Lance, dans un thread de fond, la lecture de l'ECG (série ou synthétique)."""
+    force = os.environ.get("VERITO_ECG_SIMULATE")
+    port = os.environ.get("VERITO_SERIAL_PORT") or _detecter_port_serie()
+
+    if force == "1":
+        cible = _boucle_synthetique
+    elif force == "0":
+        if not port:
+            print("❤️  ECG désactivé : aucun port série et simulation interdite (VERITO_ECG_SIMULATE=0)")
+            return
+        cible = lambda: _demarrer_serie_robuste(port)
+    else:  # auto
+        cible = (lambda: _demarrer_serie_robuste(port)) if port else _boucle_synthetique
+
+    threading.Thread(target=cible, daemon=True).start()
+
+
+def _demarrer_serie_robuste(port):
+    """Relance la lecture série si l'Arduino est débranché/rebranché."""
+    while True:
+        try:
+            _boucle_serie(port)
+        except Exception as e:
+            print("❤️  ECG : erreur série, nouvelle tentative dans 2 s :", e)
+            time.sleep(2)
+            port = os.environ.get("VERITO_SERIAL_PORT") or _detecter_port_serie() or port
+
+
+@app.route("/ecg-stream")
+def ecg_stream():
+    """Flux SSE consommé par le navigateur (js/ecg-client.js) pour tracer l'ECG."""
+    def flux():
+        q = queue.Queue(maxsize=200)
+        with _abonnes_lock:
+            _abonnes_ecg.append(q)
+        try:
+            yield ": ok\n\n"  # ouvre le flux tout de suite
+            while True:
+                payload = q.get()
+                yield f"data: {json.dumps(payload)}\n\n"
+        finally:
+            with _abonnes_lock:
+                if q in _abonnes_ecg:
+                    _abonnes_ecg.remove(q)
+
+    return Response(flux(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 if __name__ == "__main__":
+    port = int(os.environ.get("VERITO_PORT", "5000"))  # 5000 sur le Pi ; sur macOS, AirPlay
+                                                        # occupe 5000 -> lancer avec VERITO_PORT=5001
     demarrer_ecoute_micro()
-    app.run(host="0.0.0.0", port=5000)
+    demarrer_lecture_ecg()
+    # threaded=True : indispensable, le flux SSE garde une connexion ouverte.
+    app.run(host="0.0.0.0", port=port, threaded=True)

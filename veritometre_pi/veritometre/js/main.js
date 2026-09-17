@@ -46,26 +46,9 @@ function majBpm(bpm) {
   if (el) el.textContent = bpm;
 }
 
-function activerBoutonsReponse(actif) {
-  const boutonOui = document.getElementById('bouton-oui');
-  const boutonNon = document.getElementById('bouton-non');
-  if (boutonOui) boutonOui.disabled = !actif;
-  if (boutonNon) boutonNon.disabled = !actif;
-}
-
-async function envoyerReponse(reponse) {
-  activerBoutonsReponse(false); // évite le double-tap pendant que n8n réfléchit
-  try {
-    await fetch('/reponse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answer: reponse })
-    });
-  } catch (err) {
-    console.error('Erreur envoi réponse :', err);
-    activerBoutonsReponse(true); // on réactive si l'envoi a échoué
-  }
-}
+// Les réponses "oui"/"non" ne viennent plus de boutons tactiles mais du micro :
+// c'est app.py (Vosk) qui écoute et relaie la réponse à n8n. La page n'a donc
+// plus rien à envoyer — elle se contente d'afficher la question et l'ECG.
 
 function gererMessage(topic, payload) {
   switch (topic) {
@@ -73,14 +56,16 @@ function gererMessage(topic, payload) {
       afficherEtat(payload);
       break;
     case 'veritometre/mesure':
-      ajouterPointCourbe(payload.bpm);
-      majJauge(payload.ecart);
-      majBpm(payload.bpm);
+      // 'signal' = échantillon ECG brut (Arduino) ; le simulateur, lui, n'envoie
+      // que 'bpm' — on retombe dessus pour rester rétro-compatible.
+      if (typeof payload.signal === 'number') ajouterPointCourbe(payload.signal);
+      else if (typeof payload.bpm === 'number') ajouterPointCourbe(payload.bpm);
+      if (payload.ecart != null) majJauge(payload.ecart);
+      if (payload.bpm != null) majBpm(payload.bpm);
       break;
     case 'veritometre/question':
       document.getElementById('texte-question').textContent = payload.texte;
       if (etatActuel !== 'session') afficherEtat('session');
-      activerBoutonsReponse(true); // une nouvelle question est arrivée, on peut répondre
       break;
     case 'veritometre/avis':
       afficherAvis(payload.avis);
@@ -116,14 +101,12 @@ window.addEventListener('DOMContentLoaded', () => {
   initCourbe('canvas-courbe');
   afficherEtat('attente');
 
-  document.getElementById('bouton-oui')?.addEventListener('click', () => envoyerReponse('oui'));
-  document.getElementById('bouton-non')?.addEventListener('click', () => envoyerReponse('non'));
-
   if (MODE === 'simu') {
     controleurSimulateur = demarrerSimulateur(gererMessage);
   } else if (MODE === 'mqtt') {
     demarrerMQTT(gererMessage);
   } else if (MODE === 'polling') {
-    demarrerPolling(gererMessage);
+    demarrerPolling(gererMessage);   // questions / verdicts (n8n via Flask)
+    demarrerECG(gererMessage);        // courbe ECG temps réel (Arduino via SSE)
   }
 });

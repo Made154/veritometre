@@ -1,0 +1,10 @@
+# Backend Flask du Véritomètre
+flask>=3.0
+requests>=2.31
+
+# Lecture du port série de l'Arduino (capteur ECG AD8232)
+pyserial>=3.5
+
+# --- Optionnel : reconnaissance vocale locale "oui"/"non" (voir app.py) ---
+# vosk>=0.3.45
+# sounddevice>=0.4.6
