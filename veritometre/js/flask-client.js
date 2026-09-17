@@ -5,6 +5,7 @@ function demarrerPolling(onMessage, options = {}) {
   const intervalleMs = options.intervalle || 1500;
   const url = options.url || (location.origin + '/get-question');
   let derniereQuestion = null;
+  let derniereReaction = null;
   let actif = true;
 
   async function interroger() {
@@ -13,6 +14,15 @@ function demarrerPolling(onMessage, options = {}) {
       const reponse = await fetch(url, { cache: 'no-store' });
       if (!reponse.ok) throw new Error('HTTP ' + reponse.status);
       const data = await reponse.json();
+
+      if (data.reaction && data.reaction !== derniereReaction) {
+        derniereReaction = data.reaction;
+        onMessage('veritometre/verdict', {
+          resultat: data.verdict === 'verite' ? 'verite' : 'mensonge',
+          score: data.score,
+          reaction: data.reaction
+        });
+      }
 
       if (data.question && data.question !== derniereQuestion) {
         derniereQuestion = data.question;
