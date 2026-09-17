@@ -371,11 +371,13 @@ def demarrer_ecoute_micro():
 #
 # Réglages via variables d'environnement :
 #   VERITO_SERIAL_PORT  ex: /dev/cu.usbmodem14101  (auto-détection si absent)
-#   VERITO_SERIAL_BAUD  défaut 115200
+#   VERITO_SERIAL_BAUD  débit série (auto-détecté si absent)
 #   VERITO_ECG_SIMULATE 1 pour forcer un ECG synthétique (test sans matériel)
 #                       0 pour l'interdire. Absent = auto (simule si pas de port).
 # ---------------------------------------------------------------------------
-SERIAL_BAUD = int(os.environ.get("VERITO_SERIAL_BAUD", "115200"))
+# Débit série : imposé par VERITO_SERIAL_BAUD, sinon auto-détecté (_auto_baud).
+SERIAL_BAUD_ENV = os.environ.get("VERITO_SERIAL_BAUD")
+BAUDS_CANDIDATS = [115200, 9600, 57600, 38400, 250000]
 FREQ_ECG = 125  # Hz — doit correspondre à la cadence du sketch Arduino
 
 _abonnes_ecg = []                 # liste de queue.Queue, un par onglet connecté
@@ -458,11 +460,37 @@ def _detecter_port_serie():
     return None
 
 
-def _boucle_serie(port):
+def _auto_baud(port):
+    """Essaie plusieurs débits et garde celui qui produit le plus de lignes ECG
+    valides (entiers 0..1023 ou '!'), pour ne pas avoir à connaître le baud du
+    sketch Arduino."""
+    import serial  # pyserial
+    meilleur, meilleur_score = None, 0
+    for baud in BAUDS_CANDIDATS:
+        try:
+            with serial.Serial(port, baud, timeout=0.4) as ser:
+                ser.reset_input_buffer()
+                time.sleep(0.2)
+                valides = 0
+                for _ in range(40):
+                    ligne = ser.readline().decode("ascii", "ignore").strip()
+                    if ligne == "!" or (ligne.lstrip("-").isdigit() and 0 <= int(ligne) <= 1023):
+                        valides += 1
+        except Exception:
+            continue
+        print(f"❤️  ECG : test {baud} bauds -> {valides}/40 lignes valides")
+        if valides > meilleur_score:
+            meilleur, meilleur_score = baud, valides
+        if valides >= 15:          # largement suffisant : on s'arrête là
+            return baud
+    return meilleur or 115200
+
+
+def _boucle_serie(port, baud):
     import serial  # pyserial
     analyseur = AnalyseurECG()
-    print(f"❤️  ECG : ouverture du port série {port} @ {SERIAL_BAUD} bauds")
-    with serial.Serial(port, SERIAL_BAUD, timeout=1) as ser:
+    print(f"❤️  ECG : ouverture du port série {port} @ {baud} bauds")
+    with serial.Serial(port, baud, timeout=1) as ser:
         ser.reset_input_buffer()
         while True:
             ligne = ser.readline().decode("ascii", "ignore").strip()
@@ -544,7 +572,8 @@ def _demarrer_serie_robuste(port):
     """Relance la lecture série si l'Arduino est débranché/rebranché."""
     while True:
         try:
-            _boucle_serie(port)
+            baud = int(SERIAL_BAUD_ENV) if SERIAL_BAUD_ENV else _auto_baud(port)
+            _boucle_serie(port, baud)
         except Exception as e:
             print("❤️  ECG : erreur série, nouvelle tentative dans 2 s :", e)
             time.sleep(2)
