@@ -85,6 +85,12 @@ const TOUCHES_ETATS = {
   '1': 'attente', '2': 'calibration', '3': 'session', '4': 'verdict', '5': 'perdu'
 };
 document.addEventListener('keydown', (e) => {
+  // Entrée ou Espace sur l'écran d'attente -> démarre l'interrogatoire (sans souris)
+  if ((e.key === 'Enter' || e.key === ' ') && etatActuel === 'attente') {
+    e.preventDefault();
+    demarrerInterrogatoire();
+    return;
+  }
   if (TOUCHES_ETATS[e.key]) {
     afficherEtat(TOUCHES_ETATS[e.key]);
     return;
