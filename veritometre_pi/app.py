@@ -38,6 +38,9 @@ N8N_WEBHOOK_URL = os.environ.get(
     "VERITO_N8N_URL", "http://192.168.50.241:5678/webhook/interrogatoire"
 )  # IP du Mac qui fait tourner n8n (self-hosted-ai-starter-kit). Surchargeable
    # sans toucher au code : VERITO_N8N_URL=http://<ip>:5678/webhook/interrogatoire
+
+# Le LLM (Ollama) peut être lent sur CPU -> on laisse le temps de répondre.
+N8N_TIMEOUT = int(os.environ.get("VERITO_N8N_TIMEOUT", "90"))
 SESSION_ID = "session1"  # valeur par défaut
 # Session courante : renouvelée à chaque démarrage pour repartir d'un état n8n
 # vierge (sinon n8n croit l'interrogatoire déjà fini et renvoie direct le verdict).
@@ -169,7 +172,7 @@ def _poster_n8n(payload, contexte, est_demarrage=False):
     question_suivante, verdict) DANS LA RÉPONSE du webhook -> on le lit et on
     l'applique aussitôt. Retourne le code HTTP, ou None si n8n est injoignable."""
     try:
-        r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=15)
+        r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=N8N_TIMEOUT)
     except requests.exceptions.RequestException as e:
         print(f"Erreur en contactant n8n ({contexte}) :", e)
         return None
