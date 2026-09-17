@@ -184,6 +184,31 @@ def demarrer_ecoute_micro():
         print(f"Micro désactivé : modèle Vosk introuvable dans {VOSK_MODEL_PATH}")
         return
 
+    # Sur le Pi, le micro USB n'est PAS le périphérique par défaut et tourne
+    # souvent à 48 kHz (cf. test_vosk.py de Theo). On rend donc configurable :
+    #   VERITO_MIC_DEVICE : index du micro (voir la liste affichée ci-dessous)
+    #   VERITO_MIC_RATE   : fréquence (sinon = fréquence native du périphérique)
+    env_device = os.environ.get("VERITO_MIC_DEVICE")
+    device = int(env_device) if env_device not in (None, "") else None
+
+    try:
+        infos = sd.query_devices()
+        print("🎤 Périphériques d'entrée disponibles :")
+        for i, d in enumerate(infos):
+            if d.get("max_input_channels", 0) > 0:
+                marque = " <-- choisi (VERITO_MIC_DEVICE)" if i == device else ""
+                print(f"   [{i}] {d['name']} ({int(d['default_samplerate'])} Hz){marque}")
+    except Exception as e:
+        print("  (impossible de lister les périphériques :", e, ")")
+
+    # Fréquence native du micro choisi (48000 sur le Pi) — sinon rien n'est capté.
+    try:
+        rate_natif = int(sd.query_devices(device, "input")["default_samplerate"])
+    except Exception:
+        rate_natif = 48000
+    env_rate = os.environ.get("VERITO_MIC_RATE")
+    samplerate = int(env_rate) if env_rate else rate_natif
+
     try:
         modele = Model(VOSK_MODEL_PATH)
     except Exception as e:
@@ -193,7 +218,7 @@ def demarrer_ecoute_micro():
     # Grammaire fermée : force la reconnaissance sur seulement ces mots, bien
     # plus fiable qu'une reconnaissance libre pour un vocabulaire aussi réduit.
     grammaire = json.dumps(MOTS_ATTENDUS + ["[unk]"])
-    recognizer = KaldiRecognizer(modele, 16000, grammaire)
+    recognizer = KaldiRecognizer(modele, samplerate, grammaire)
 
     audio_queue = queue.Queue()
 
@@ -203,9 +228,15 @@ def demarrer_ecoute_micro():
         audio_queue.put(bytes(indata))
 
     def boucle():
-        with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype="int16",
-                                channels=1, callback=callback_audio):
-            print("🎤 Écoute du micro démarrée (oui / non)")
+        try:
+            flux = sd.RawInputStream(samplerate=samplerate, blocksize=8000, dtype="int16",
+                                     channels=1, device=device, callback=callback_audio)
+        except Exception as e:
+            print("Micro désactivé : impossible d'ouvrir le flux audio :", e)
+            print("  -> ajuste VERITO_MIC_DEVICE / VERITO_MIC_RATE (voir la liste ci-dessus)")
+            return
+        with flux:
+            print(f"🎤 Écoute du micro démarrée (oui / non) — device={device} @ {samplerate} Hz")
             while True:
                 data = audio_queue.get()
 
@@ -215,6 +246,8 @@ def demarrer_ecoute_micro():
                 if recognizer.AcceptWaveform(data):
                     resultat = json.loads(recognizer.Result())
                     texte = resultat.get("text", "").strip()
+                    if texte:  # log de debug : ce que Vosk a compris
+                        print("🎤 Entendu :", repr(texte))
                     if texte in MOTS_ATTENDUS:
                         print("🎤 Réponse détectée :", texte)
                         envoyer_reponse_n8n(texte)
