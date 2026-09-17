@@ -63,43 +63,57 @@ def index():
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 
-def appliquer_etat_n8n(data):
-    """Met à jour l'écran à partir d'un état renvoyé par n8n. Champs attendus :
-      { "avis": "vrai"|"faux"|null, "question_suivante": "..."|null,
-        "verdict": "mensonge"|"verite"|null, "score": 0-100|null }
+def appliquer_etat_n8n(data, est_demarrage=False):
+    """Met à jour l'écran à partir de la réponse de n8n.
 
-    - 'verdict' présent : fin de l'interrogatoire -> écran verdict.
-    - 'avis' présent : on affiche VRAI/FAUX quelques secondes, PUIS on bascule
-      automatiquement sur 'question_suivante' (fournie dans le même message).
-    - sinon : on affiche directement la question (1ʳᵉ question, ou pas d'avis).
-
-    n8n renvoie cet état SOIT dans la réponse du webhook (mode actuel, cf.
-    envoyer_reponse_n8n / demarrer_interrogatoire), SOIT via un POST sur /question
-    (ancien mode HTTP Request). Les deux passent par ici.
+    Le workflow n8n ("Détecteur de mensonge") renvoie À CHAQUE tour :
+      { "reaction": "...", "question_suivante": "...",
+        "verdict": "mensonge"|"verite" }
+    Ici, 'verdict' est le JUGEMENT DE LA DERNIÈRE RÉPONSE (pas une fin), et une
+    'question_suivante' est presque toujours fournie. On mappe donc :
+      - verdict 'mensonge' -> avis 'faux' (FAUX),  'verite' -> avis 'vrai' (VRAI)
+      - on affiche ce flash VRAI/FAUX, puis on bascule sur question_suivante.
+    Cas particuliers :
+      - démarrage : pas de réponse à juger -> on affiche direct la 1ʳᵉ question.
+      - verdict SANS question_suivante -> vraie fin -> écran verdict final.
     """
     global etat_courant, en_attente_reponse
 
     data = data or {}
-    avis = data.get("avis")
+    reaction = data.get("reaction")
     question_suivante = data.get("question_suivante")
     verdict = data.get("verdict")
     score = data.get("score")
 
-    en_attente_reponse = False  # on coupe l'écoute tant que l'avis/le verdict n'est pas passé
+    # 'verdict' par tour (mensonge/verite) -> avis VRAI/FAUX
+    if verdict in ("verite", "vérité", "verité", "vrai"):
+        avis = "vrai"
+    elif verdict in ("mensonge", "faux"):
+        avis = "faux"
+    else:
+        avis = data.get("avis")  # compat éventuelle
 
-    if verdict:
+    if reaction:
+        print("Réaction n8n :", reaction)
+
+    en_attente_reponse = False  # on coupe l'écoute le temps d'afficher l'avis/le verdict
+
+    if verdict and not question_suivante:
+        # Plus de question : c'est une vraie fin d'interrogatoire.
         etat_courant = {
             "etat": "verdict", "question_suivante": None,
             "avis": None, "verdict": verdict, "score": score,
         }
-        print("Verdict final reçu de n8n :", etat_courant)
+        print("Verdict FINAL reçu de n8n :", etat_courant)
 
-    elif avis:
+    elif avis and not est_demarrage:
+        # Jugement de la réponse : flash VRAI/FAUX, puis question suivante.
         etat_courant = {
             "etat": "avis", "question_suivante": None,
             "avis": avis, "verdict": None, "score": None,
         }
-        print("Avis reçu de n8n :", avis, "— prochaine question dans", DUREE_AFFICHAGE_AVIS, "s")
+        print("Avis (jugement réponse) :", avis, "— prochaine question dans",
+              DUREE_AFFICHAGE_AVIS, "s")
 
         def basculer_vers_question():
             global etat_courant, en_attente_reponse
@@ -112,12 +126,13 @@ def appliquer_etat_n8n(data):
         threading.Timer(DUREE_AFFICHAGE_AVIS, basculer_vers_question).start()
 
     else:
+        # Démarrage (ou pas de jugement) : on affiche directement la question.
         etat_courant = {
             "etat": "session", "question_suivante": question_suivante,
             "avis": None, "verdict": None, "score": None,
         }
         en_attente_reponse = bool(question_suivante)
-        print("Nouvelle question reçue de n8n :", etat_courant)
+        print("Question affichée :", question_suivante)
 
     return etat_courant
 
@@ -136,10 +151,10 @@ def get_question():
     return jsonify(etat_courant)
 
 
-def _poster_n8n(payload, contexte):
-    """POST vers n8n. IMPORTANT : n8n renvoie l'état suivant (question_suivante,
-    avis, verdict, score) DANS LA RÉPONSE du webhook -> on le lit et on l'applique
-    aussitôt à l'écran. Retourne le code HTTP, ou None si n8n est injoignable."""
+def _poster_n8n(payload, contexte, est_demarrage=False):
+    """POST vers n8n. IMPORTANT : n8n renvoie l'état suivant (reaction,
+    question_suivante, verdict) DANS LA RÉPONSE du webhook -> on le lit et on
+    l'applique aussitôt. Retourne le code HTTP, ou None si n8n est injoignable."""
     try:
         r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=15)
     except requests.exceptions.RequestException as e:
@@ -155,7 +170,7 @@ def _poster_n8n(payload, contexte):
     if isinstance(data, list):        # n8n renvoie parfois [ {...} ]
         data = data[0] if data else {}
 
-    appliquer_etat_n8n(data)          # <-- c'est ici que la question/verdict s'affiche
+    appliquer_etat_n8n(data, est_demarrage=est_demarrage)  # affiche question/avis/verdict
     return r.status_code
 
 
@@ -181,7 +196,8 @@ def demarrer_interrogatoire():
     global session_courante
     session_courante = f"session-{int(time.time())}"  # nouvelle session -> n8n repart de zéro
     print("Nouvelle session :", session_courante)
-    return _poster_n8n({"answer": "oui", "session_id": session_courante}, "démarrage")
+    return _poster_n8n({"answer": "oui", "session_id": session_courante},
+                       "démarrage", est_demarrage=True)
 
 
 @app.route("/reponse", methods=["POST"])
