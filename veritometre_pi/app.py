@@ -34,7 +34,9 @@ VOSK_MODEL_PATH = _trouver_modele_vosk()
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
 # --- À ADAPTER : adresse du PC qui fait tourner n8n, sur le même réseau que le Pi ---
-N8N_WEBHOOK_URL = "http://192.168.50.126:5678/webhook/interrogatoire"
+N8N_WEBHOOK_URL = os.environ.get(
+    "VERITO_N8N_URL", "http://192.168.50.68:5678/webhook/interrogatoire"
+)  # IP du PC Windows qui fait tourner n8n (surchargeable sans toucher au code)
 SESSION_ID = "session1"  # un seul écran/session pour l'instant
 
 # État courant affiché à l'écran. Mis à jour par le nœud "HTTP Request" de n8n.

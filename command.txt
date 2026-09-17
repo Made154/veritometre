@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test de joignabilité du webhook n8n depuis le Pi (envoie une fausse réponse).
 # Usage : bash command.txt   (ou ./command.txt après chmod +x)
-curl -sS -m 5 -X POST http://192.168.50.126:5678/webhook/interrogatoire \
+curl -sS -m 5 -X POST http://192.168.50.68:5678/webhook/interrogatoire \
   -H "Content-Type: application/json" \
   -d '{"answer":"oui","session_id":"session1"}'; echo " <- exit $?"
