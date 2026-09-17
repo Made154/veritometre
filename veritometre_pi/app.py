@@ -218,39 +218,59 @@ def demarrer_ecoute_micro():
     # Grammaire fermée : force la reconnaissance sur seulement ces mots, bien
     # plus fiable qu'une reconnaissance libre pour un vocabulaire aussi réduit.
     grammaire = json.dumps(MOTS_ATTENDUS + ["[unk]"])
-    recognizer = KaldiRecognizer(modele, samplerate, grammaire)
 
     audio_queue = queue.Queue()
 
     def callback_audio(indata, frames, time_info, status):
         if status:
-            print("Statut audio :", status)
+            print("Statut audio :", status)   # p.ex. "input overflow" si le Pi sature
         audio_queue.put(bytes(indata))
 
     def boucle():
-        try:
-            flux = sd.RawInputStream(samplerate=samplerate, blocksize=8000, dtype="int16",
-                                     channels=1, device=device, callback=callback_audio)
-        except Exception as e:
-            print("Micro désactivé : impossible d'ouvrir le flux audio :", e)
-            print("  -> ajuste VERITO_MIC_DEVICE / VERITO_MIC_RATE (voir la liste ci-dessus)")
-            return
-        with flux:
-            print(f"🎤 Écoute du micro démarrée (oui / non) — device={device} @ {samplerate} Hz")
-            while True:
-                data = audio_queue.get()
+        # Écoute À LA DEMANDE : le micro n'est ouvert QUE pendant qu'une question
+        # attend une réponse. Le reste du temps (avis, verdict, n8n qui réfléchit,
+        # écran d'attente) le flux est fermé -> plus d'"input overflow" à vide, et
+        # ça colle au déroulé : question -> on écoute -> réponse -> n8n conclut ->
+        # question suivante -> on rouvre.
+        print(f"🎤 Micro prêt — device={device} @ {samplerate} Hz "
+              f"(ouverture à chaque question)")
+        while True:
+            # 1) attendre qu'une question soit posée
+            while not en_attente_reponse:
+                time.sleep(0.05)
 
-                if not en_attente_reponse:
-                    continue  # on n'écoute que quand une réponse est attendue
+            # 2) question posée : recognizer neuf + tampon propre, puis on ouvre
+            recognizer = KaldiRecognizer(modele, samplerate, grammaire)
+            with audio_queue.mutex:
+                audio_queue.queue.clear()
+            try:
+                flux = sd.RawInputStream(samplerate=samplerate, blocksize=8000,
+                                         dtype="int16", channels=1, device=device,
+                                         callback=callback_audio)
+            except Exception as e:
+                print("Micro : impossible d'ouvrir le flux audio :", e)
+                print("  -> ajuste VERITO_MIC_DEVICE / VERITO_MIC_RATE (voir la liste)")
+                time.sleep(0.5)
+                continue
 
-                if recognizer.AcceptWaveform(data):
-                    resultat = json.loads(recognizer.Result())
-                    texte = resultat.get("text", "").strip()
-                    if texte:  # log de debug : ce que Vosk a compris
-                        print("🎤 Entendu :", repr(texte))
-                    if texte in MOTS_ATTENDUS:
-                        print("🎤 Réponse détectée :", texte)
-                        envoyer_reponse_n8n(texte)
+            with flux:
+                print("🎤 J'écoute la réponse…")
+                # on écoute tant que la question est active (envoyer_reponse_n8n
+                # remet en_attente_reponse à False dès qu'une réponse part)
+                while en_attente_reponse:
+                    try:
+                        data = audio_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    if recognizer.AcceptWaveform(data):
+                        texte = json.loads(recognizer.Result()).get("text", "").strip()
+                        if texte:
+                            print("🎤 Entendu :", repr(texte))
+                        if texte in MOTS_ATTENDUS:
+                            print("🎤 Réponse détectée :", texte)
+                            envoyer_reponse_n8n(texte)
+                            break
+            print("🎤 Micro en pause (attente de la prochaine question).")
 
     threading.Thread(target=boucle, daemon=True).start()
 
