@@ -27,9 +27,14 @@ function afficherAvis(avis) {
 function afficherVerdict(resultat, score) {
   const texte = document.getElementById('texte-verdict');
   const scoreEl = document.getElementById('score-verdict');
+  const scoreLabel = document.querySelector('#ecran-verdict .score-etiquette');
   texte.textContent = resultat === 'mensonge' ? 'MENSONGE' : 'VÉRITÉ';
   texte.className = 'verdict ' + (resultat === 'mensonge' ? 'verdict-mensonge' : 'verdict-verite');
-  scoreEl.textContent = score + '%';
+  // Pas de score par tour (jugement d'une réponse) -> on masque la ligne SCORE.
+  const aScore = score !== null && score !== undefined && score !== '';
+  scoreEl.textContent = aScore ? score + '%' : '';
+  scoreEl.hidden = !aScore;
+  if (scoreLabel) scoreLabel.hidden = !aScore;
 }
 
 function majJauge(ecart) {

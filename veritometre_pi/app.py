@@ -107,13 +107,22 @@ def appliquer_etat_n8n(data, est_demarrage=False):
         print("Verdict FINAL reçu de n8n :", etat_courant)
 
     elif avis and not est_demarrage:
-        # Jugement de la réponse : flash VRAI/FAUX, puis question suivante.
-        etat_courant = {
-            "etat": "avis", "question_suivante": None,
-            "avis": avis, "verdict": None, "score": None,
-        }
-        print("Avis (jugement réponse) :", avis, "— prochaine question dans",
-              DUREE_AFFICHAGE_AVIS, "s")
+        # Jugement de la réponse : plein écran dramatique quelques secondes,
+        # puis on enchaîne automatiquement sur la question suivante.
+        #   verite   -> écran verdict "VÉRITÉ" (sans score)
+        #   mensonge -> écran "CONTACT PERDU"
+        if avis == "vrai":
+            etat_courant = {
+                "etat": "verdict", "question_suivante": None,
+                "avis": None, "verdict": "verite", "score": None,
+            }
+        else:
+            etat_courant = {
+                "etat": "perdu", "question_suivante": None,
+                "avis": None, "verdict": None, "score": None,
+            }
+        print("Jugement :", avis, "-> écran", etat_courant["etat"],
+              "; prochaine question dans", DUREE_AFFICHAGE_AVIS, "s")
 
         def basculer_vers_question():
             global etat_courant, en_attente_reponse
