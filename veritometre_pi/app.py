@@ -37,7 +37,10 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 N8N_WEBHOOK_URL = os.environ.get(
     "VERITO_N8N_URL", "http://192.168.50.68:5678/webhook/interrogatoire"
 )  # IP du PC Windows qui fait tourner n8n (surchargeable sans toucher au code)
-SESSION_ID = "session1"  # un seul écran/session pour l'instant
+SESSION_ID = "session1"  # valeur par défaut
+# Session courante : renouvelée à chaque démarrage pour repartir d'un état n8n
+# vierge (sinon n8n croit l'interrogatoire déjà fini et renvoie direct le verdict).
+session_courante = SESSION_ID
 
 # État courant affiché à l'écran. Mis à jour par le nœud "HTTP Request" de n8n.
 etat_courant = {
@@ -166,7 +169,7 @@ def envoyer_reponse_n8n(reponse):
         return None
 
     en_attente_reponse = False  # on coupe l'écoute tout de suite pour éviter les doublons
-    statut = _poster_n8n({"answer": reponse, "session_id": SESSION_ID}, f"réponse '{reponse}'")
+    statut = _poster_n8n({"answer": reponse, "session_id": session_courante}, f"réponse '{reponse}'")
     if statut is None:
         en_attente_reponse = True  # échec réseau -> on réarme pour permettre un nouvel essai
     return statut
@@ -175,7 +178,10 @@ def envoyer_reponse_n8n(reponse):
 def demarrer_interrogatoire():
     """Lance l'interrogatoire : premier appel à n8n, qui renvoie la 1ʳᵉ question.
     Reproduit l'appel « à lancer en premier » (cf. test PowerShell)."""
-    return _poster_n8n({"answer": "oui", "session_id": SESSION_ID}, "démarrage")
+    global session_courante
+    session_courante = f"session-{int(time.time())}"  # nouvelle session -> n8n repart de zéro
+    print("Nouvelle session :", session_courante)
+    return _poster_n8n({"answer": "oui", "session_id": session_courante}, "démarrage")
 
 
 @app.route("/reponse", methods=["POST"])
