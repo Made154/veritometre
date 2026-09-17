@@ -11,7 +11,25 @@ from flask import Flask, request, jsonify, send_from_directory, Response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, "veritometre")  # contient index.html, css/, js/
-VOSK_MODEL_PATH = os.path.join(BASE_DIR, "vosk-model-fr")  # dossier du modèle téléchargé
+
+
+def _trouver_modele_vosk():
+    """Localise le modèle vocal Vosk. Il peut être committé à la racine du dépôt
+    (vosk-model-fr.22, comme l'a fait Theo), posé à côté de app.py, ou pointé par
+    la variable d'environnement VOSK_MODEL_PATH."""
+    candidats = [
+        os.environ.get("VOSK_MODEL_PATH"),
+        os.path.join(BASE_DIR, "vosk-model-fr"),
+        os.path.join(BASE_DIR, "..", "vosk-model-fr.22"),
+        os.path.join(BASE_DIR, "..", "vosk-model-fr"),
+    ]
+    for chemin in candidats:
+        if chemin and os.path.isdir(chemin):
+            return os.path.abspath(chemin)
+    return os.path.join(BASE_DIR, "vosk-model-fr")  # défaut (sert au message d'erreur)
+
+
+VOSK_MODEL_PATH = _trouver_modele_vosk()
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
