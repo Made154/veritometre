@@ -4,6 +4,17 @@ const QUESTIONS = [
   { id: 3, texte: "Summer sait-elle garder un secret ?" }
 ];
 
+const REACTIONS_MENSONGE = [
+  "Tes capteurs hurlent plus fort que ton déni.",
+  "Ta conductance vient de bondir. Sans commentaire.",
+  "Le déni ne fonctionne pas ici. On le sait tous les deux."
+];
+const REACTIONS_VERITE = [
+  "Authentifié. Aucune trace de stress.",
+  "Vérité confirmée. C'est bien le plus inquiétant.",
+  "Tes glandes sudoripares sont calmes. Pour une fois, tu dis vrai."
+];
+
 const DUREE_ATTENTE = 4000;
 const DUREE_CALIBRATION = 3000;
 const INTERVALLE_MESURE = 200;
@@ -75,9 +86,11 @@ function demarrerSimulateur(onMessage) {
   function cycleVerdict(ecartQuestion) {
     const score = Math.min(100, Math.round(ecartQuestion * 1.4));
     const resultat = score >= 50 ? 'mensonge' : 'verite';
+    const liste = resultat === 'mensonge' ? REACTIONS_MENSONGE : REACTIONS_VERITE;
+    const reaction = liste[Math.floor(Math.random() * liste.length)];
 
     publier('veritometre/etat', 'verdict');
-    publier('veritometre/verdict', { resultat, score });
+    publier('veritometre/verdict', { resultat, score, reaction });
 
     indexQuestion++;
     const suite = indexQuestion < QUESTIONS.length ? cycleCalibration : demarrerExamen;

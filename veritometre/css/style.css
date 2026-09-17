@@ -125,6 +125,16 @@ html, body {
 .bloc-bpm { text-align: center; }
 .valeur-bpm { font-size: 32px; color: #ffffff; }
 
+.reaction-ia {
+  font-size: 22px;
+  font-style: italic;
+  text-align: center;
+  max-width: 680px;
+  margin: 0;
+  color: #ffffff;
+  min-height: 30px;
+}
+
 .verdict {
   font-size: 88px;
   font-weight: bold;

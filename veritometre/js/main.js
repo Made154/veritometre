@@ -6,23 +6,48 @@ const MODE = 'polling';
 const ETATS = ['attente', 'calibration', 'session', 'verdict', 'perdu'];
 let etatActuel = null;
 let controleurSimulateur = null;
+let minuteurCalibration = null;
+const DELAI_CALIBRATION_AUTO = 3000;
+
+const ANNONCES_ETATS = {
+  attente: 'Posez votre main sur les capteurs.',
+  calibration: 'Étalonnage biométrique en cours. Ne bougez plus.',
+  perdu: 'Contact perdu. Tentative de fuite détectée.'
+};
 
 function afficherEtat(etat) {
   if (!ETATS.includes(etat)) return;
+  clearTimeout(minuteurCalibration);
+  const changement = etat !== etatActuel;
   document.querySelectorAll('.ecran').forEach((el) => el.classList.remove('actif'));
   const cible = document.getElementById('ecran-' + etat);
   if (cible) cible.classList.add('actif');
   etatActuel = etat;
 
   if (etat === 'session') reinitialiserCourbe();
+  if (changement && ANNONCES_ETATS[etat]) parler(ANNONCES_ETATS[etat]);
+
+  if (changement && etat === 'calibration') {
+    minuteurCalibration = setTimeout(() => {
+      afficherEtat('session');
+      annoncerQuestionAffichee();
+    }, DELAI_CALIBRATION_AUTO);
+  }
 }
 
-function afficherVerdict(resultat, score) {
+function afficherVerdict(resultat, score, reaction) {
+  const texteReaction = document.getElementById('texte-reaction');
   const texte = document.getElementById('texte-verdict');
   const scoreEl = document.getElementById('score-verdict');
-  texte.textContent = resultat === 'mensonge' ? 'MENSONGE' : 'VÉRITÉ';
+
+  const libelleVerdict = resultat === 'mensonge' ? 'MENSONGE' : 'VÉRITÉ';
+  if (texteReaction) texteReaction.textContent = reaction || '';
+  texte.textContent = libelleVerdict;
   texte.className = 'verdict ' + (resultat === 'mensonge' ? 'verdict-mensonge' : 'verdict-verite');
-  scoreEl.textContent = score + '%';
+  scoreEl.textContent = (score || score === 0) ? score + '%' : '--';
+
+  const annonce = reaction ? `${reaction} Verdict : ${libelleVerdict}.` : `${libelleVerdict}.`;
+  parler(annonce);
 }
 
 function majJauge(ecart) {
@@ -52,11 +77,31 @@ function gererMessage(topic, payload) {
     case 'veritometre/question':
       document.getElementById('texte-question').textContent = payload.texte;
       if (etatActuel !== 'session') afficherEtat('session');
+      parler(payload.texte);
       break;
     case 'veritometre/verdict':
-      afficherVerdict(payload.resultat, payload.score);
+      afficherVerdict(payload.resultat, payload.score, payload.reaction);
       break;
   }
+}
+
+function annoncerVerdictAffiche() {
+  const reactionEl = document.getElementById('texte-reaction');
+  const verdictEl = document.getElementById('texte-verdict');
+  const reaction = reactionEl ? reactionEl.textContent : '';
+  const verdict = verdictEl ? verdictEl.textContent : '';
+  const annonce = reaction && verdict ? `${reaction} Verdict : ${verdict}.` : (reaction || verdict);
+  if (annonce) parler(annonce);
+}
+
+function annoncerQuestionAffichee() {
+  const questionEl = document.getElementById('texte-question');
+  if (questionEl && questionEl.textContent) parler(questionEl.textContent);
+}
+
+function annoncerEcran(etat) {
+  if (etat === 'verdict') annoncerVerdictAffiche();
+  if (etat === 'session') annoncerQuestionAffichee();
 }
 
 const TOUCHES_ETATS = {
@@ -65,6 +110,7 @@ const TOUCHES_ETATS = {
 document.addEventListener('keydown', (e) => {
   if (TOUCHES_ETATS[e.key]) {
     afficherEtat(TOUCHES_ETATS[e.key]);
+    annoncerEcran(TOUCHES_ETATS[e.key]);
     return;
   }
   if (e.key === 'ArrowRight' && etatActuel === 'session' && controleurSimulateur) {
@@ -72,11 +118,16 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   const i = ETATS.indexOf(etatActuel);
+  let nouvelEtat = null;
   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-    afficherEtat(ETATS[(i + 1 + ETATS.length) % ETATS.length]);
+    nouvelEtat = ETATS[(i + 1 + ETATS.length) % ETATS.length];
   }
   if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-    afficherEtat(ETATS[(i - 1 + ETATS.length) % ETATS.length]);
+    nouvelEtat = ETATS[(i - 1 + ETATS.length) % ETATS.length];
+  }
+  if (nouvelEtat) {
+    afficherEtat(nouvelEtat);
+    annoncerEcran(nouvelEtat);
   }
 });
 
