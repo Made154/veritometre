@@ -97,9 +97,26 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+let demarrageEnCours = false;
+function demarrerInterrogatoire() {
+  if (demarrageEnCours || etatActuel !== 'attente') return;
+  demarrageEnCours = true;
+  fetch('/demarrer', { method: 'POST' })
+    .catch((err) => console.error('Erreur démarrage :', err))
+    .finally(() => { demarrageEnCours = false; });
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   initCourbe('canvas-courbe');
   afficherEtat('attente');
+
+  // Appui sur l'écran d'attente ("posez votre main") -> lance l'interrogatoire.
+  // Tactile ou clic ; n8n renvoie la 1ʳᵉ question, le polling l'affiche ensuite.
+  const ecranAttente = document.getElementById('ecran-attente');
+  if (ecranAttente) {
+    ecranAttente.addEventListener('click', demarrerInterrogatoire);
+    ecranAttente.addEventListener('touchstart', demarrerInterrogatoire, { passive: true });
+  }
 
   if (MODE === 'simu') {
     controleurSimulateur = demarrerSimulateur(gererMessage);
