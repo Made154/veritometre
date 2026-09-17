@@ -90,12 +90,12 @@ def appliquer_etat_n8n(data, est_demarrage=False):
     verdict = data.get("verdict")
     score = data.get("score")
 
-    # 'verdict' par tour -> avis VRAI/FAUX. Tolérant à la casse et aux accents
-    # (llama peut renvoyer "Mensonge", "VÉRITÉ", "vrai", "faux"...).
+    # 'verdict' par tour -> avis VRAI/FAUX. Tolérant à la casse, aux accents ET
+    # aux troncatures du LLM ("Mensonge", "men", "VÉRITÉ", "ver", "vrai", "faux").
     v = str(verdict or "").strip().lower()
-    if "menson" in v or v == "faux":
+    if v.startswith(("men", "fau")):
         avis = "faux"
-    elif "vrai" in v or "vérit" in v or "verit" in v:
+    elif v.startswith(("ver", "vér", "vra")):
         avis = "vrai"
     else:
         avis = data.get("avis")  # compat éventuelle
