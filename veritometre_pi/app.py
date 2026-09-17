@@ -60,22 +60,23 @@ def index():
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 
-@app.route("/question", methods=["POST"])
-def receive_question():
-    """Appelé par n8n (nœud HTTP Request) après chaque réponse. Le JSON envoyé
-    par n8n doit ressembler à :
+def appliquer_etat_n8n(data):
+    """Met à jour l'écran à partir d'un état renvoyé par n8n. Champs attendus :
       { "avis": "vrai"|"faux"|null, "question_suivante": "..."|null,
         "verdict": "mensonge"|"verite"|null, "score": 0-100|null }
 
-    - Si 'verdict' est présent : fin de l'interrogatoire, on affiche direct l'écran verdict.
-    - Si 'avis' est présent : on affiche VRAI/FAUX quelques secondes, PUIS on bascule
-      automatiquement sur 'question_suivante' (déjà fournie dans le même appel).
-    - Sinon (ex: toute première question, pas encore de réponse à juger) : on affiche
-      la question directement.
+    - 'verdict' présent : fin de l'interrogatoire -> écran verdict.
+    - 'avis' présent : on affiche VRAI/FAUX quelques secondes, PUIS on bascule
+      automatiquement sur 'question_suivante' (fournie dans le même message).
+    - sinon : on affiche directement la question (1ʳᵉ question, ou pas d'avis).
+
+    n8n renvoie cet état SOIT dans la réponse du webhook (mode actuel, cf.
+    envoyer_reponse_n8n / demarrer_interrogatoire), SOIT via un POST sur /question
+    (ancien mode HTTP Request). Les deux passent par ici.
     """
     global etat_courant, en_attente_reponse
 
-    data = request.get_json(force=True, silent=True) or {}
+    data = data or {}
     avis = data.get("avis")
     question_suivante = data.get("question_suivante")
     verdict = data.get("verdict")
@@ -115,6 +116,14 @@ def receive_question():
         en_attente_reponse = bool(question_suivante)
         print("Nouvelle question reçue de n8n :", etat_courant)
 
+    return etat_courant
+
+
+@app.route("/question", methods=["POST"])
+def receive_question():
+    """Compat : ancien mode où n8n POSTe l'état ici (nœud HTTP Request)."""
+    data = request.get_json(force=True, silent=True) or {}
+    appliquer_etat_n8n(data)
     return jsonify({"status": "ok", **etat_courant})
 
 
@@ -124,9 +133,32 @@ def get_question():
     return jsonify(etat_courant)
 
 
+def _poster_n8n(payload, contexte):
+    """POST vers n8n. IMPORTANT : n8n renvoie l'état suivant (question_suivante,
+    avis, verdict, score) DANS LA RÉPONSE du webhook -> on le lit et on l'applique
+    aussitôt à l'écran. Retourne le code HTTP, ou None si n8n est injoignable."""
+    try:
+        r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=15)
+    except requests.exceptions.RequestException as e:
+        print(f"Erreur en contactant n8n ({contexte}) :", e)
+        return None
+
+    print(f"{contexte} -> n8n (status {r.status_code})")
+    try:
+        data = r.json()
+    except ValueError:
+        print("  Réponse n8n non-JSON :", r.text[:200])
+        data = {}
+    if isinstance(data, list):        # n8n renvoie parfois [ {...} ]
+        data = data[0] if data else {}
+
+    appliquer_etat_n8n(data)          # <-- c'est ici que la question/verdict s'affiche
+    return r.status_code
+
+
 def envoyer_reponse_n8n(reponse):
-    """Relaie une réponse ('oui'/'non') à n8n. Utilisé à la fois par les boutons
-    tactiles (/reponse) et par l'écoute du micro."""
+    """Relaie une réponse ('oui'/'non') captée au micro à n8n, puis affiche la
+    question/le verdict que n8n renvoie."""
     global en_attente_reponse
 
     if not en_attente_reponse:
@@ -134,19 +166,16 @@ def envoyer_reponse_n8n(reponse):
         return None
 
     en_attente_reponse = False  # on coupe l'écoute tout de suite pour éviter les doublons
+    statut = _poster_n8n({"answer": reponse, "session_id": SESSION_ID}, f"réponse '{reponse}'")
+    if statut is None:
+        en_attente_reponse = True  # échec réseau -> on réarme pour permettre un nouvel essai
+    return statut
 
-    try:
-        r = requests.post(
-            N8N_WEBHOOK_URL,
-            json={"answer": reponse, "session_id": SESSION_ID},
-            timeout=10,
-        )
-        print(f"Réponse '{reponse}' transmise à n8n (status {r.status_code})")
-        return r.status_code
-    except requests.exceptions.RequestException as e:
-        print("Erreur en contactant n8n :", e)
-        en_attente_reponse = True  # on réarme puisque l'envoi a échoué
-        return None
+
+def demarrer_interrogatoire():
+    """Lance l'interrogatoire : premier appel à n8n, qui renvoie la 1ʳᵉ question.
+    Reproduit l'appel « à lancer en premier » (cf. test PowerShell)."""
+    return _poster_n8n({"answer": "oui", "session_id": SESSION_ID}, "démarrage")
 
 
 @app.route("/reponse", methods=["POST"])
@@ -164,6 +193,21 @@ def transmettre_reponse():
         return jsonify({"status": "erreur", "message": "réponse ignorée ou n8n injoignable"}), 502
 
     return jsonify({"status": "ok", "n8n_status": status})
+
+
+@app.route("/demarrer", methods=["POST"])
+def demarrer():
+    """Déclenché par un appui sur l'écran d'attente : lance l'interrogatoire
+    (premier appel à n8n) et affiche la première question qu'il renvoie."""
+    if en_attente_reponse:
+        # une question est déjà en cours : on ne relance pas
+        return jsonify({"status": "ok", "deja_en_cours": True, **etat_courant})
+
+    status = demarrer_interrogatoire()
+    if status is None:
+        return jsonify({"status": "erreur", "message": "n8n injoignable"}), 502
+
+    return jsonify({"status": "ok", **etat_courant})
 
 
 # ---------------------------------------------------------------------------
