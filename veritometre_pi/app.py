@@ -35,8 +35,9 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
 # --- À ADAPTER : adresse du PC qui fait tourner n8n, sur le même réseau que le Pi ---
 N8N_WEBHOOK_URL = os.environ.get(
-    "VERITO_N8N_URL", "http://192.168.50.68:5678/webhook/interrogatoire"
-)  # IP du PC Windows qui fait tourner n8n (surchargeable sans toucher au code)
+    "VERITO_N8N_URL", "http://192.168.50.241:5678/webhook/interrogatoire"
+)  # IP du Mac qui fait tourner n8n (self-hosted-ai-starter-kit). Surchargeable
+   # sans toucher au code : VERITO_N8N_URL=http://<ip>:5678/webhook/interrogatoire
 SESSION_ID = "session1"  # valeur par défaut
 # Session courante : renouvelée à chaque démarrage pour repartir d'un état n8n
 # vierge (sinon n8n croit l'interrogatoire déjà fini et renvoie direct le verdict).
