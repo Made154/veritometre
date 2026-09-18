@@ -107,21 +107,13 @@ def appliquer_etat_n8n(data, est_demarrage=False):
     if reaction:
         print("Réaction n8n :", reaction)
 
-    en_attente_reponse = False  # on coupe l'écoute le temps d'afficher l'avis/le verdict
+    en_attente_reponse = False  # on coupe l'écoute le temps d'afficher la révélation
 
-    if verdict and not question_suivante:
-        # Plus de question : c'est une vraie fin d'interrogatoire.
-        etat_courant = {
-            "etat": "verdict", "question_suivante": None,
-            "avis": None, "verdict": verdict, "score": score,
-        }
-        print("Verdict FINAL reçu de n8n :", etat_courant)
-
-    elif avis and not est_demarrage:
-        # Jugement de la réponse : plein écran dramatique quelques secondes,
-        # puis on enchaîne automatiquement sur la question suivante.
-        #   verite   -> écran verdict "VÉRITÉ" (sans score)
-        #   mensonge -> écran "FAUX" (style alerte rouge)
+    if not est_demarrage and avis:
+        # TOUR DE RÉPONSE : on montre TOUJOURS la révélation quelques secondes,
+        #   verite -> écran "VÉRITÉ" (vert) ; mensonge -> écran "FAUX" (rouge)
+        # PUIS on enchaîne sur la question suivante (ou retour à l'attente s'il
+        # n'y en a pas). Plus de branche qui saute la révélation.
         if avis == "vrai":
             etat_courant = {
                 "etat": "verdict", "question_suivante": None,
@@ -133,15 +125,23 @@ def appliquer_etat_n8n(data, est_demarrage=False):
                 "avis": None, "verdict": None, "score": None,
             }
         print("Jugement :", avis, "-> écran", etat_courant["etat"],
-              "; prochaine question dans", DUREE_AFFICHAGE_AVIS, "s")
+              "; suite dans", DUREE_AFFICHAGE_AVIS, "s")
 
+        suite = question_suivante  # capturée pour le minuteur
         def basculer_vers_question():
             global etat_courant, en_attente_reponse
-            etat_courant = {
-                "etat": "session", "question_suivante": question_suivante,
-                "avis": None, "verdict": None, "score": None,
-            }
-            en_attente_reponse = bool(question_suivante)
+            if suite:
+                etat_courant = {
+                    "etat": "session", "question_suivante": suite,
+                    "avis": None, "verdict": None, "score": None,
+                }
+                en_attente_reponse = True
+            else:  # n8n n'a pas fourni de question suivante -> on revient à l'attente
+                etat_courant = {
+                    "etat": "attente", "question_suivante": None,
+                    "avis": None, "verdict": None, "score": None,
+                }
+                en_attente_reponse = False
 
         threading.Timer(DUREE_AFFICHAGE_AVIS, basculer_vers_question).start()
 
