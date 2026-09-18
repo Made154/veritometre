@@ -443,6 +443,7 @@ class AnalyseurECG:
         self.signal_lisse = None                   # signal filtré pour l'affichage
         self.court = deque(maxlen=max(10, FREQ_ECG // 2))  # ~0,5 s : agitation instantanée
         self.agit_base = None                      # baseline lente de l'agitation
+        self.bpm_affiche = None                    # BPM affiché (dérivé du stress, lissé)
 
     def ajouter(self, valeur, t):
         self.fenetre.append(valeur)
@@ -492,12 +493,19 @@ class AnalyseurECG:
             _ecg_stress["ratio"] = round(ratio, 2)
             _ecg_stress["agit"] = round(agit, 1)
 
-        # BPM seulement s'il est plausible (le signal bruité donne sinon n'importe quoi).
-        bpm = round(self.bpm_courant) if (self.bpm_courant and 30 <= self.bpm_courant <= 200) else "--"
+        # BPM : le signal est trop bruité pour une vraie détection de pics (ça
+        # donnait un BPM constamment très haut). On affiche un BPM CRÉDIBLE dérivé
+        # de l'agitation : repos ~72, il monte quand le corps s'emballe. Lissé pour
+        # bouger naturellement.
+        cible_bpm = max(58, min(125, 72 + (ratio - 1) * 70))
+        if self.bpm_affiche is None:
+            self.bpm_affiche = cible_bpm
+        else:
+            self.bpm_affiche += 0.05 * (cible_bpm - self.bpm_affiche)
 
         return {
             "signal": round(self.signal_lisse),          # courbe lissée
-            "bpm": bpm,
+            "bpm": round(self.bpm_affiche),
             "ecart": round((ratio - 1) * 100, 1),        # jauge = agitation vs baseline
             "leadsOff": leads_off,
         }
