@@ -36,17 +36,22 @@ void setup() {
   prochainEnvoi = micros();
 }
 
+// Détection "leads-off" désactivée : sur ce montage les broches LO+/LO-
+// clignotent (~60% de faux "!"), ce qui hache le tracé. On envoie donc TOUJOURS
+// la valeur brute A0 -> courbe continue (bruitée mais vivante, très "véritomètre").
+// Pour réactiver la détection, remets le bloc if(LO...) ci-dessous.
 void loop() {
   unsigned long maintenant = micros();
 
-  // Cadence fixe : on n'envoie qu'une mesure toutes les PERIODE_US.
+  // Cadence fixe : une mesure toutes les PERIODE_US.
   if ((long)(maintenant - prochainEnvoi) < 0) return;
   prochainEnvoi += PERIODE_US;
 
-  // Électrode décrochée -> on signale la perte de contact.
-  if (digitalRead(BROCHE_LO_PLUS) == HIGH || digitalRead(BROCHE_LO_MOINS) == HIGH) {
-    Serial.println('!');
-  } else {
-    Serial.println(analogRead(BROCHE_ECG));
-  }
+  Serial.println(analogRead(BROCHE_ECG));  // toujours la valeur brute
+
+  // --- Ancienne détection leads-off (désactivée) ---
+  // if (digitalRead(BROCHE_LO_PLUS) == HIGH || digitalRead(BROCHE_LO_MOINS) == HIGH)
+  //   Serial.println('!');
+  // else
+  //   Serial.println(analogRead(BROCHE_ECG));
 }
