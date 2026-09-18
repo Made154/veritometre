@@ -91,6 +91,15 @@ document.addEventListener('keydown', (e) => {
     demarrerInterrogatoire();
     return;
   }
+  // Réponse au clavier (secours si le micro ne marche pas) : O = oui, N = non
+  if ((e.key === 'o' || e.key === 'O') && etatActuel === 'session') {
+    repondreClavier('oui');
+    return;
+  }
+  if ((e.key === 'n' || e.key === 'N') && etatActuel === 'session') {
+    repondreClavier('non');
+    return;
+  }
   if (TOUCHES_ETATS[e.key]) {
     afficherEtat(TOUCHES_ETATS[e.key]);
     return;
@@ -107,6 +116,15 @@ document.addEventListener('keydown', (e) => {
     afficherEtat(ETATS[(i - 1 + ETATS.length) % ETATS.length]);
   }
 });
+
+// Secours clavier : envoie une réponse oui/non à Flask (même chemin que le micro).
+function repondreClavier(reponse) {
+  fetch('/reponse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answer: reponse })
+  }).catch((err) => console.error('Erreur réponse clavier :', err));
+}
 
 let demarrageEnCours = false;
 function demarrerInterrogatoire() {
