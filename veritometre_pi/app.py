@@ -187,6 +187,16 @@ def _poster_n8n(payload, contexte, est_demarrage=False):
     if isinstance(data, list):        # n8n renvoie parfois [ {...} ]
         data = data[0] if data else {}
 
+    # Verdict piloté par l'ECG : sur un tour de réponse, si le corps s'agite
+    # au-dessus de sa baseline -> "mensonge", sinon -> "verite". n8n garde la
+    # réaction et la question suivante ; c'est le CORPS qui tranche.
+    if not est_demarrage and ECG_VERDICT:
+        ratio = _ecg_stress.get("ratio", 1.0)
+        verdict_ecg = "mensonge" if ratio >= SEUIL_STRESS else "verite"
+        print(f"ECG stress ratio={ratio} (seuil {SEUIL_STRESS}) -> verdict {verdict_ecg} "
+              f"(n8n disait {data.get('verdict')})")
+        data["verdict"] = verdict_ecg
+
     appliquer_etat_n8n(data, est_demarrage=est_demarrage)  # affiche question/avis/verdict
     return r.status_code
 
@@ -380,6 +390,13 @@ SERIAL_BAUD_ENV = os.environ.get("VERITO_SERIAL_BAUD")
 BAUDS_CANDIDATS = [115200, 9600, 57600, 38400, 250000]
 FREQ_ECG = 125  # Hz — doit correspondre à la cadence du sketch Arduino
 
+# --- Verdict influencé par l'ECG ---------------------------------------------
+# On mesure l'"agitation" du signal (écart-type court) vs une baseline lente :
+# un sursaut d'agitation au moment de répondre -> le corps te trahit -> mensonge.
+ECG_VERDICT = os.environ.get("VERITO_ECG_VERDICT", "1") != "0"
+SEUIL_STRESS = float(os.environ.get("VERITO_ECG_SEUIL", "1.15"))  # ratio agit/baseline
+_ecg_stress = {"ratio": 1.0, "agit": 0.0}
+
 _abonnes_ecg = []                 # liste de queue.Queue, un par onglet connecté
 _abonnes_lock = threading.Lock()
 
@@ -406,6 +423,9 @@ class AnalyseurECG:
         self.intervalles = deque(maxlen=6)         # derniers intervalles RR (s)
         self.bpm_courant = None
         self.bpm_base = None                       # baseline (EMA lente)
+        self.signal_lisse = None                   # signal filtré pour l'affichage
+        self.court = deque(maxlen=max(10, FREQ_ECG // 2))  # ~0,5 s : agitation instantanée
+        self.agit_base = None                      # baseline lente de l'agitation
 
     def ajouter(self, valeur, t):
         self.fenetre.append(valeur)
@@ -434,13 +454,34 @@ class AnalyseurECG:
             self.au_dessus = False
 
     def etat(self, valeur, leads_off=False):
-        ecart = 0.0
-        if self.bpm_courant and self.bpm_base:
-            ecart = (self.bpm_courant - self.bpm_base) / self.bpm_base * 100
+        # Lissage pour l'affichage : le signal brut est très bruité (secteur 50 Hz),
+        # un filtre passe-bas simple (EMA) donne une courbe lisible.
+        if self.signal_lisse is None:
+            self.signal_lisse = float(valeur)
+        else:
+            self.signal_lisse += 0.25 * (valeur - self.signal_lisse)
+
+        # Agitation instantanée (écart-type court) vs baseline lente -> ratio de stress.
+        self.court.append(valeur)
+        ratio = 1.0
+        if len(self.court) >= 10:
+            moy = sum(self.court) / len(self.court)
+            agit = (sum((x - moy) ** 2 for x in self.court) / len(self.court)) ** 0.5
+            if self.agit_base is None:
+                self.agit_base = agit
+            else:
+                self.agit_base += 0.003 * (agit - self.agit_base)   # baseline ~4 s
+            ratio = agit / max(1.0, self.agit_base)
+            _ecg_stress["ratio"] = round(ratio, 2)
+            _ecg_stress["agit"] = round(agit, 1)
+
+        # BPM seulement s'il est plausible (le signal bruité donne sinon n'importe quoi).
+        bpm = round(self.bpm_courant) if (self.bpm_courant and 30 <= self.bpm_courant <= 200) else "--"
+
         return {
-            "signal": valeur,                                       # tracé brut de la courbe
-            "bpm": round(self.bpm_courant) if self.bpm_courant else "--",
-            "ecart": round(ecart, 1),
+            "signal": round(self.signal_lisse),          # courbe lissée
+            "bpm": bpm,
+            "ecart": round((ratio - 1) * 100, 1),        # jauge = agitation vs baseline
             "leadsOff": leads_off,
         }
 
