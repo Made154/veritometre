@@ -12,8 +12,10 @@ function demarrerPolling(onMessage, options = {}) {
     if (data.etat === 'verdict' && data.verdict) {
       onMessage('veritometre/verdict', { resultat: data.verdict, score: data.score });
       onMessage('veritometre/etat', 'verdict');
+    } else if (data.etat === 'faux') {
+      onMessage('veritometre/etat', 'faux');         // mensonge -> écran FAUX
     } else if (data.etat === 'perdu') {
-      onMessage('veritometre/etat', 'perdu');        // mensonge -> CONTACT PERDU
+      onMessage('veritometre/etat', 'perdu');        // (ancien) CONTACT PERDU
     } else if (data.etat === 'avis' && data.avis) {
       onMessage('veritometre/avis', { avis: data.avis });
     } else if (data.question_suivante) {

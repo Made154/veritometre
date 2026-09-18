@@ -3,7 +3,7 @@
 // 'mqtt'    = broker MQTT (nécessite Mosquitto + un publisher côté Pi)
 const MODE = 'polling';
 
-const ETATS = ['attente', 'calibration', 'session', 'avis', 'verdict', 'perdu'];
+const ETATS = ['attente', 'calibration', 'session', 'avis', 'verdict', 'perdu', 'faux'];
 let etatActuel = null;
 let controleurSimulateur = null;
 

@@ -121,7 +121,7 @@ def appliquer_etat_n8n(data, est_demarrage=False):
         # Jugement de la réponse : plein écran dramatique quelques secondes,
         # puis on enchaîne automatiquement sur la question suivante.
         #   verite   -> écran verdict "VÉRITÉ" (sans score)
-        #   mensonge -> écran "CONTACT PERDU"
+        #   mensonge -> écran "FAUX" (style alerte rouge)
         if avis == "vrai":
             etat_courant = {
                 "etat": "verdict", "question_suivante": None,
@@ -129,7 +129,7 @@ def appliquer_etat_n8n(data, est_demarrage=False):
             }
         else:
             etat_courant = {
-                "etat": "perdu", "question_suivante": None,
+                "etat": "faux", "question_suivante": None,
                 "avis": None, "verdict": None, "score": None,
             }
         print("Jugement :", avis, "-> écran", etat_courant["etat"],
@@ -208,9 +208,9 @@ def _poster_n8n(payload, contexte, est_demarrage=False):
     # au-dessus de sa baseline -> "mensonge", sinon -> "verite". n8n garde la
     # réaction et la question suivante ; c'est le CORPS qui tranche.
     if not est_demarrage and ECG_VERDICT:
-        ratio = _ecg_stress.get("ratio", 1.0)
-        verdict_ecg = "mensonge" if ratio >= SEUIL_STRESS else "verite"
-        print(f"ECG stress ratio={ratio} (seuil {SEUIL_STRESS}) -> verdict {verdict_ecg} "
+        bpm = _ecg_stress.get("bpm", 72)
+        verdict_ecg = "mensonge" if bpm >= SEUIL_BPM else "verite"
+        print(f"BPM={bpm} (seuil {SEUIL_BPM}) -> verdict {verdict_ecg} "
               f"(n8n disait {data.get('verdict')})")
         data["verdict"] = verdict_ecg
 
@@ -412,7 +412,9 @@ FREQ_ECG = 125  # Hz — doit correspondre à la cadence du sketch Arduino
 # un sursaut d'agitation au moment de répondre -> le corps te trahit -> mensonge.
 ECG_VERDICT = os.environ.get("VERITO_ECG_VERDICT", "1") != "0"
 SEUIL_STRESS = float(os.environ.get("VERITO_ECG_SEUIL", "1.15"))  # ratio agit/baseline
-_ecg_stress = {"ratio": 1.0, "agit": 0.0}
+# Verdict par le BPM : au-dessus du seuil -> mensonge, en dessous -> vérité.
+SEUIL_BPM = float(os.environ.get("VERITO_BPM_SEUIL", "85"))
+_ecg_stress = {"ratio": 1.0, "agit": 0.0, "bpm": 72}
 
 _abonnes_ecg = []                 # liste de queue.Queue, un par onglet connecté
 _abonnes_lock = threading.Lock()
@@ -502,6 +504,7 @@ class AnalyseurECG:
             self.bpm_affiche = cible_bpm
         else:
             self.bpm_affiche += 0.05 * (cible_bpm - self.bpm_affiche)
+        _ecg_stress["bpm"] = round(self.bpm_affiche)   # sert au verdict par BPM
 
         return {
             "signal": round(self.signal_lisse),          # courbe lissée

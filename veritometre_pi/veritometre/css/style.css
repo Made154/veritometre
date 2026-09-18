@@ -179,6 +179,17 @@ html, body {
   color: #ffffff;
   margin: 0;
 }
+/* Écran "FAUX" (verdict mensonge) — même esprit alerte rouge que CONTACT PERDU,
+   dimensionné pour faire pendant à l'écran VÉRITÉ. */
+.titre-faux {
+  font-size: 110px;
+  font-weight: bold;
+  letter-spacing: 8px;
+  margin: 0;
+  color: var(--rouge-alerte);
+  text-shadow: 0 0 24px var(--rouge-alerte), 0 0 48px rgba(255, 43, 43, 0.6);
+  animation: clignote 0.6s steps(2, start) infinite;
+}
 @keyframes clignote {
   50% { opacity: 0.2; }
 }
