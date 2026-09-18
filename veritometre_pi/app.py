@@ -61,7 +61,9 @@ etat_courant = {
 # Passe à False dès qu'une réponse est envoyée, pour éviter les doublons.
 en_attente_reponse = False
 
-DUREE_AFFICHAGE_AVIS = 3.0  # secondes pendant lesquelles VRAI/FAUX reste affiché
+# Durée d'affichage de la révélation (VÉRITÉ / CONTACT PERDU) avant la question
+# suivante. Réglable : VERITO_DUREE_REVELATION=6 bash restart.sh
+DUREE_AFFICHAGE_AVIS = float(os.environ.get("VERITO_DUREE_REVELATION", "5"))
 
 
 @app.route("/")
@@ -169,24 +171,38 @@ def get_question():
     return jsonify(etat_courant)
 
 
-def _poster_n8n(payload, contexte, est_demarrage=False):
-    """POST vers n8n. IMPORTANT : n8n renvoie l'état suivant (reaction,
-    question_suivante, verdict) DANS LA RÉPONSE du webhook -> on le lit et on
-    l'applique aussitôt. Retourne le code HTTP, ou None si n8n est injoignable."""
-    try:
-        r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=N8N_TIMEOUT)
-    except requests.exceptions.RequestException as e:
-        print(f"Erreur en contactant n8n ({contexte}) :", e)
-        return None
+def _est_fallback_n8n(data):
+    """Vrai si n8n a renvoyé son secours de parsing (le petit LLM a produit un
+    JSON invalide) : verdict 'indéterminé' ou la question 'peux-tu répéter…'."""
+    d = data or {}
+    v = str(d.get("verdict", "")).lower()
+    q = str(d.get("question_suivante", "")).lower()
+    return v.startswith("ind") or "répéter ta réponse" in q or "repeter ta reponse" in q
 
-    print(f"{contexte} -> n8n (status {r.status_code})")
-    try:
-        data = r.json()
-    except ValueError:
-        print("  Réponse n8n non-JSON :", r.text[:200])
-        data = {}
-    if isinstance(data, list):        # n8n renvoie parfois [ {...} ]
-        data = data[0] if data else {}
+
+def _poster_n8n(payload, contexte, est_demarrage=False):
+    """POST vers n8n. n8n renvoie l'état suivant (reaction, question_suivante,
+    verdict) DANS LA RÉPONSE. Réessaie une fois si n8n renvoie son fallback de
+    parsing (JSON LLM invalide). Retourne le code HTTP, ou None si injoignable."""
+    r = None
+    data = {}
+    for essai in range(2):
+        try:
+            r = requests.post(N8N_WEBHOOK_URL, json=payload, timeout=N8N_TIMEOUT)
+        except requests.exceptions.RequestException as e:
+            print(f"Erreur en contactant n8n ({contexte}) :", e)
+            return None
+        print(f"{contexte} -> n8n (status {r.status_code})")
+        try:
+            data = r.json()
+        except ValueError:
+            print("  Réponse n8n non-JSON :", r.text[:200])
+            data = {}
+        if isinstance(data, list):        # n8n renvoie parfois [ {...} ]
+            data = data[0] if data else {}
+        if not _est_fallback_n8n(data):
+            break
+        print("  n8n a renvoyé son fallback (JSON LLM invalide) — nouvel essai…")
 
     # Verdict piloté par l'ECG : sur un tour de réponse, si le corps s'agite
     # au-dessus de sa baseline -> "mensonge", sinon -> "verite". n8n garde la
