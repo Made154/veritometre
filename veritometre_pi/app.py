@@ -35,10 +35,11 @@ app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
 # --- À ADAPTER : adresse du PC qui fait tourner n8n, sur le même réseau que le Pi ---
 N8N_WEBHOOK_URL = os.environ.get(
-    "VERITO_N8N_URL", "http://MacBook-Neo.local:5678/webhook/interrogatoire"
-)  # Nom mDNS du Mac qui fait tourner n8n : stable même si l'IP change de réseau
-   # (le Pi résout .local via avahi). Surchargeable si besoin :
-   # VERITO_N8N_URL=http://<ip-ou-nom>:5678/webhook/interrogatoire
+    "VERITO_N8N_URL", "http://192.168.50.241:5678/webhook/interrogatoire"
+)  # IP du Mac (n8n) au réseau de l'école. On préfère l'IP au nom mDNS car,
+   # avec OrbStack, MacBook-Neo.local s'annonce sur plusieurs interfaces
+   # (dont des IP Docker injoignables). Surchargeable :
+   # VERITO_N8N_URL=http://<ip>:5678/webhook/interrogatoire
 
 # Le LLM (Ollama) peut être lent sur CPU -> on laisse le temps de répondre.
 N8N_TIMEOUT = int(os.environ.get("VERITO_N8N_TIMEOUT", "90"))
