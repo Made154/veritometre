@@ -91,6 +91,18 @@ document.addEventListener('keydown', (e) => {
     demarrerInterrogatoire();
     return;
   }
+  // Q = injecter une question manuellement (pilotage de la démo)
+  if (e.key === 'q' || e.key === 'Q') {
+    const texte = prompt('Question à poser :');
+    if (texte && texte.trim()) {
+      fetch('/poser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texte: texte.trim() })
+      }).catch((err) => console.error('Erreur question manuelle :', err));
+    }
+    return;
+  }
   // Réponse au clavier (secours si le micro ne marche pas) : O = oui, N = non
   if ((e.key === 'o' || e.key === 'O') && etatActuel === 'session') {
     repondreClavier('oui');

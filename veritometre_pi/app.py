@@ -276,6 +276,25 @@ def demarrer():
     return jsonify({"status": "ok", **etat_courant})
 
 
+@app.route("/poser", methods=["POST"])
+def poser_question():
+    """Injecte MANUELLEMENT une question à l'écran (pilotage de la démo). La
+    réponse suivante part quand même vers n8n et le verdict reste piloté par
+    l'ECG. Corps JSON : { "texte": "..." }."""
+    global etat_courant, en_attente_reponse
+    data = request.get_json(force=True, silent=True) or {}
+    texte = (data.get("texte") or data.get("question") or "").strip()
+    if not texte:
+        return jsonify({"status": "erreur", "message": "texte manquant"}), 400
+    etat_courant = {
+        "etat": "session", "question_suivante": texte,
+        "avis": None, "verdict": None, "score": None,
+    }
+    en_attente_reponse = True
+    print("Question manuelle :", texte)
+    return jsonify({"status": "ok", **etat_courant})
+
+
 # ---------------------------------------------------------------------------
 # Reconnaissance vocale locale (Vosk) : écoute "oui" / "non" au micro pendant
 # qu'une question est affichée, et envoie automatiquement la réponse détectée.
